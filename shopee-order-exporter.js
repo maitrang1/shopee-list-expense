@@ -2,6 +2,7 @@
     const stats = {
         totalOrders: 0,
         totalProducts: 0,
+        freeProducts: 0,
         totalSpent: 0,
         totalShipping: 0,
         totalOriginalPrice: 0,
@@ -10,8 +11,13 @@
     };
 
     const csvRows = [
-        'Ngày,Giờ,YYMMDD,YYMM,Mã đơn,Tên sản phẩm,Số lượng,Đơn giá gốc (k VND),Thành tiền gốc (k VND),Thành tiền thực tế (k VND),Tiết kiệm (k VND)'
+        'Ngày,Giờ,YYMMDD,YYMM,Mã đơn,Tên sản phẩm,Số lượng,Đơn giá gốc (VND),Đơn giá thực tế (VND),Thành tiền gốc (VND),Thành tiền thực tế (VND),Tiết kiệm (VND),Ghi chú'
     ];
+
+    function formatNumber(num) {
+        const formatted = Math.round(num).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        return '"' + formatted + '"';
+    }
 
     function formatYYMMDD(date) {
         const yy = String(date.getFullYear()).slice(-2);
@@ -80,6 +86,17 @@
 
                 const cards = order.info_card?.order_list_cards || [];
                 
+                // Tính tổng giá gốc đơn hàng (chỉ dùng order_price)
+                const tongGiaGocDonHang = cards.reduce((sum, c) => {
+                    return sum + (c.product_info?.item_groups || []).reduce((gSum, g) => {
+                        return gSum + (g.items || []).reduce((iSum, i) => {
+                            return iSum + ((i.order_price || 0) / 100000) * (i.amount || 0);
+                        }, 0);
+                    }, 0);
+                }, 0);
+                
+                const tyLeGiam = tongGiaGocDonHang > 0 ? subtotal / tongGiaGocDonHang : 1;
+                
                 for (const card of cards) {
                     const groups = card.product_info?.item_groups || [];
                     
@@ -89,25 +106,24 @@
                         for (const item of items) {
                             stats.totalProducts++;
                             
-                            const tenSanPham = (item.name || 'N/A').replace(/,/g, ' ');
+                            const orderPrice = item.order_price || 0;
+                            const donGiaGoc = orderPrice / 100000;
+                            
+                            let ghiChu = "";
+                            if (donGiaGoc === 0) {
+                                ghiChu = "Quà tặng - 0 VND";
+                                stats.freeProducts++;
+                            }
+                            
+                            const tenSanPham = (item.name || 'N/A').replace(/,/g, ' ').replace(/"/g, '""');
                             const soLuong = item.amount || 0;
-                            const donGiaGoc = (item.price_before_discount || 0) / 100000;
+                            
+                            const donGiaThucTe = donGiaGoc * tyLeGiam;
                             const thanhTienGoc = donGiaGoc * soLuong;
-                            
-                            stats.totalOriginalPrice += thanhTienGoc;
-                            
-                            const tongGiaGocDonHang = cards.reduce((sum, c) => {
-                                return sum + (c.product_info?.item_groups || []).reduce((gSum, g) => {
-                                    return gSum + (g.items || []).reduce((iSum, i) => {
-                                        return iSum + ((i.price_before_discount || 0) / 100000) * (i.amount || 0);
-                                    }, 0);
-                                }, 0);
-                            }, 0);
-                            
-                            const tyLeGiam = tongGiaGocDonHang > 0 ? subtotal / tongGiaGocDonHang : 1;
-                            const thanhTienThucTe = thanhTienGoc * tyLeGiam;
+                            const thanhTienThucTe = donGiaThucTe * soLuong;
                             const tietKiem = thanhTienGoc - thanhTienThucTe;
                             
+                            stats.totalOriginalPrice += thanhTienGoc;
                             stats.totalSaved += tietKiem;
                             
                             csvRows.push([
@@ -116,19 +132,21 @@
                                 yymmdd,
                                 yymm,
                                 orderId,
-                                tenSanPham,
+                                '"' + tenSanPham + '"',
                                 soLuong,
-                                donGiaGoc.toFixed(1),
-                                thanhTienGoc.toFixed(1),
-                                thanhTienThucTe.toFixed(1),
-                                tietKiem.toFixed(1)
+                                formatNumber(donGiaGoc),
+                                formatNumber(donGiaThucTe),
+                                formatNumber(thanhTienGoc),
+                                formatNumber(thanhTienThucTe),
+                                formatNumber(tietKiem),
+                                ghiChu
                             ].join(','));
                         }
                     }
                 }
             }
 
-            console.log(`Đã xử lý ${stats.totalOrders} đơn hàng, ${stats.totalProducts} sản phẩm...`);
+            console.log(`Đã xử lý ${stats.totalOrders} đơn, ${stats.totalProducts} SP (${stats.freeProducts} SP quà tặng)...`);
             offset += limit;
             await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -138,15 +156,24 @@
         }
     }
 
-    console.log('\n=== THỐNG KÊ ===');
+    console.log('\n========================================');
+    console.log('=== THỐNG KÊ ===');
+    console.log('========================================');
     console.log(`Tổng đơn hàng: ${stats.totalOrders}`);
     console.log(`Tổng sản phẩm: ${stats.totalProducts}`);
-    console.log(`Tổng chi tiêu: ${stats.totalSpent.toFixed(0)}k VND (bao gồm ship ${stats.totalShipping.toFixed(0)}k)`);
-    console.log(`Tổng giá gốc: ${stats.totalOriginalPrice.toFixed(0)}k VND`);
-    console.log(`Tổng tiết kiệm: ${stats.totalSaved.toFixed(0)}k VND`);
+    console.log(`  - SP có giá: ${stats.totalProducts - stats.freeProducts}`);
+    console.log(`  - SP quà tặng (0đ): ${stats.freeProducts}`);
+    console.log(`\n💰 TỔNG CHI TIÊU:`);
+    console.log(`  - Toàn bộ: ${formatNumber(stats.totalSpent).replace(/"/g, '')} VND`);
+    console.log(`  - Phí ship: ${formatNumber(stats.totalShipping).replace(/"/g, '')} VND`);
+    console.log(`  - Chỉ sản phẩm: ${formatNumber(stats.totalSpent - stats.totalShipping).replace(/"/g, '')} VND`);
+    console.log(`\n💵 GIÁ GỐC & TIẾT KIỆM:`);
+    console.log(`  - Tổng giá gốc: ${formatNumber(stats.totalOriginalPrice).replace(/"/g, '')} VND`);
+    console.log(`  - Tổng tiết kiệm: ${formatNumber(stats.totalSaved).replace(/"/g, '')} VND`);
     if (stats.noDateCount > 0) {
-        console.log(`Đơn hàng không có ngày: ${stats.noDateCount}`);
+        console.log(`\n⏰ Đơn hàng không có ngày: ${stats.noDateCount}`);
     }
+    console.log('========================================');
 
     const csvContent = '\ufeff' + csvRows.join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -155,5 +182,5 @@
     link.download = `shopee_orders_${new Date().toISOString().slice(0,10)}.csv`;
     link.click();
     
-    console.log('\nĐã tải file CSV!');
+    console.log('\n✅ Đã tải file CSV!');
 })();

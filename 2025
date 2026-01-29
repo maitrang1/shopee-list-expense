@@ -1,0 +1,78 @@
+async function getTotalSpent2025() {
+  console.log('🔍 Đang tính tổng chi tiêu năm 2025...\n');
+  
+  let total = 0;
+  let orderCount = 0;
+  let offset = 0;
+  const limit = 20;
+  let foundOlderYear = false;
+  
+  while (true) {
+    // Fetch batch
+    const response = await fetch(
+      `/api/v4/order/get_all_order_and_checkout_list?_oft=0&limit=${limit}&offset=${offset}`
+    );
+    const data = await response.json();
+    
+    // Hết đơn thì dừng
+    if (!data.new_data?.order_or_checkout_data?.length) {
+      break;
+    }
+    
+    const orders = data.new_data.order_or_checkout_data;
+    
+    // Duyệt từng đơn trong batch
+    for (const item of orders) {
+      const order = item.order_list_detail;
+      
+      // Check an toàn
+      if (!order.shipping?.tracking_info?.ctime) {
+        continue;
+      }
+      
+      const timestamp = order.shipping.tracking_info.ctime;
+      const date = new Date(timestamp * 1000);
+      const year = date.getFullYear();
+      
+      if (year === 2025) {
+        // Cộng đơn 2025
+        const amount = order.info_card.final_total / 100000;
+        total += amount;
+        orderCount++;
+      } else if (year < 2025) {
+        // Gặp đơn cũ hơn 2025 → đánh dấu để dừng
+        foundOlderYear = true;
+        break;
+      }
+    }
+    
+    console.log(`✓ Đã quét ${offset + orders.length} đơn...`);
+    
+    // Nếu đã gặp năm cũ → DỪNG
+    if (foundOlderYear) {
+      console.log('ℹ️ Đã gặp đơn năm 2024, dừng quét.\n');
+      break;
+    }
+    
+    // Tiếp tục batch tiếp theo
+    offset += limit;
+    
+    // Delay nhẹ
+    await new Promise(r => setTimeout(r, 500));
+  }
+  
+  console.log('='.repeat(50));
+  console.log('📊 KẾT QUẢ NĂM 2025:');
+  console.log('='.repeat(50));
+  console.log(`💰 Tổng chi tiêu: ${total.toLocaleString('vi-VN')}₫`);
+  console.log(`📦 Số đơn hàng: ${orderCount} đơn`);
+  if (orderCount > 0) {
+    console.log(`💵 Trung bình/đơn: ${(total/orderCount).toLocaleString('vi-VN')}₫`);
+  }
+  console.log('='.repeat(50));
+  
+  return total;
+}
+
+// Chạy
+getTotalSpent2025();
